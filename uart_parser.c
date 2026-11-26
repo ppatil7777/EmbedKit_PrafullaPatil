@@ -8,16 +8,18 @@
 #define ARRAY_LENGTH(array) (sizeof(array) / sizeof((array)[0]))
 
 typedef enum {
-    WAIT_SOF,      /* Look for the start marker. */
-    READ_CMD,      /* Save the command and start the XOR checksum. */
-    READ_LEN,      /* Validate the payload length. */
-    READ_PAYLOAD,  /* Save one payload byte per call. */
-    READ_CHECKSUM  /* Compare the final byte with the computed XOR. */
+    WAIT_SOF,
+    READ_CMD,
+    READ_LEN,
+    READ_PAYLOAD,
+    READ_CHECKSUM
 } ParserState;
 
 typedef enum {
-    UART_TIMEOUT = -2, UART_BAD_CHECKSUM = -1,
-    UART_IN_PROGRESS = 0, UART_FRAME_OK = 1
+    UART_TIMEOUT = -2,
+    UART_BAD_CHECKSUM = -1,
+    UART_IN_PROGRESS = 0,
+    UART_FRAME_OK = 1
 } FeedResult;
 
 typedef struct {
@@ -37,20 +39,13 @@ typedef struct {
 
 static UartParser uart_parser_init(uint32_t timeout_ms)
 {
-    UartParser parser = {0};
-
-    parser.state = WAIT_SOF;
-    parser.timeout_ms = timeout_ms;
+    UartParser parser = {.state = WAIT_SOF, .timeout_ms = timeout_ms};
     return parser;
 }
 
-/* A valid frame is available in parser->frame when UART_FRAME_OK is returned. */
 static FeedResult uart_parser_feed(UartParser *parser, uint8_t byte,
                                    uint32_t arrival_ms)
 {
-    /* Check the gap before using this byte. After a timeout, the caller can
-       feed it again as the possible start of a new frame. Unsigned
-       subtraction also works when the millisecond clock wraps. */
     if (parser->state != WAIT_SOF && parser->timeout_ms != 0u &&
         (uint32_t)(arrival_ms - parser->last_byte_ms) > parser->timeout_ms) {
         parser->state = WAIT_SOF;
@@ -123,7 +118,6 @@ static StreamResult uart_feed_stream(UartParser *parser, const uint8_t *bytes,
                    (unsigned long)arrival_ms, (unsigned int)byte,
                    (unsigned long)(uint32_t)(arrival_ms - parser->last_byte_ms),
                    (unsigned long)parser->timeout_ms);
-            /* The late byte belongs to the new stream and may be a new SOF. */
             previous_state = parser->state;
             result = uart_parser_feed(parser, byte, arrival_ms);
         }
@@ -157,7 +151,6 @@ static StreamResult uart_feed_stream(UartParser *parser, const uint8_t *bytes,
     return summary;
 }
 
-/* Check how many frames and errors the demonstration produced. */
 static int expect_counts(StreamResult actual, size_t frames, size_t timeouts,
                          size_t checksum_errors)
 {
@@ -217,7 +210,6 @@ int main(void)
     }
 
     puts("\nTest 4 -- Timeout disabled");
-    puts("The gap is ignored. The partial frame continues to its checksum.");
     parser = uart_parser_init(0u);
     result = uart_feed_stream(&parser, recovery_bytes, recovery_times,
                               ARRAY_LENGTH(recovery_bytes));
