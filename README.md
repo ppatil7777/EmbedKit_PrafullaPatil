@@ -22,6 +22,10 @@ On Windows with MinGW GCC, run `./uart_parser.exe` from PowerShell after compili
 | Consecutive frames | Valid frames at 20 and 50 ms, including `AA` as a payload byte |
 | Timeout disabled | Zero timeouts and a checksum error at 210 ms |
 
+## How the parser works
+
+Each call handles one byte. The parser first looks for the start marker, then reads the command, length, payload, and checksum in order. The length tells it how many payload bytes to read. The example program passes timestamps from an array, so all four demonstrations run without UART hardware or delays.
+
 ## Protocol details
 
 - The checksum XORs CMD, LEN, and the payload. For the clean frame, `01 ^ 03 ^ 10 ^ 20 ^ 30 = 02`, so the demonstration uses `02` where the assignment prints `22`.

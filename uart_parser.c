@@ -8,7 +8,11 @@
 #define ARRAY_LENGTH(array) (sizeof(array) / sizeof((array)[0]))
 
 typedef enum {
-    WAIT_SOF, READ_CMD, READ_LEN, READ_PAYLOAD, READ_CHECKSUM
+    WAIT_SOF,      /* Look for the start marker. */
+    READ_CMD,      /* Save the command and start the XOR checksum. */
+    READ_LEN,      /* Validate the payload length. */
+    READ_PAYLOAD,  /* Save one payload byte per call. */
+    READ_CHECKSUM  /* Compare the final byte with the computed XOR. */
 } ParserState;
 
 typedef enum {
@@ -44,7 +48,9 @@ static UartParser uart_parser_init(uint32_t timeout_ms)
 static FeedResult uart_parser_feed(UartParser *parser, uint8_t byte,
                                    uint32_t arrival_ms)
 {
-    /* Unsigned subtraction handles a wrapping uint32_t millisecond clock. */
+    /* Check the gap before using this byte. After a timeout, the caller can
+       feed it again as the possible start of a new frame. Unsigned
+       subtraction also works when the millisecond clock wraps. */
     if (parser->state != WAIT_SOF && parser->timeout_ms != 0u &&
         (uint32_t)(arrival_ms - parser->last_byte_ms) > parser->timeout_ms) {
         parser->state = WAIT_SOF;
@@ -74,7 +80,8 @@ static FeedResult uart_parser_feed(UartParser *parser, uint8_t byte,
         parser->state = byte == 0u ? READ_CHECKSUM : READ_PAYLOAD;
         break;
     case READ_PAYLOAD:
-        parser->frame.payload[parser->payload_index++] = byte;
+        parser->frame.payload[parser->payload_index] = byte;
+        ++parser->payload_index;
         parser->checksum ^= byte;
         if (parser->payload_index == parser->frame.length) {
             parser->state = READ_CHECKSUM;
@@ -150,6 +157,7 @@ static StreamResult uart_feed_stream(UartParser *parser, const uint8_t *bytes,
     return summary;
 }
 
+/* Check how many frames and errors the demonstration produced. */
 static int expect_counts(StreamResult actual, size_t frames, size_t timeouts,
                          size_t checksum_errors)
 {
@@ -182,27 +190,40 @@ int main(void)
     const uint32_t consecutive_times[] = {0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50};
 
     UartParser parser = uart_parser_init(DEMO_TIMEOUT_MS);
+    StreamResult result;
     int passed = 1;
 
     puts("Test 1 -- Clean valid frame");
-    passed &= expect_counts(uart_feed_stream(&parser, clean_bytes, clean_times,
-                                             ARRAY_LENGTH(clean_bytes)), 1, 0, 0);
+    result = uart_feed_stream(&parser, clean_bytes, clean_times,
+                              ARRAY_LENGTH(clean_bytes));
+    if (!expect_counts(result, 1, 0, 0)) {
+        passed = 0;
+    }
 
     puts("\nTest 2 -- Timeout mid-frame, then recovery");
     parser = uart_parser_init(DEMO_TIMEOUT_MS);
-    passed &= expect_counts(uart_feed_stream(&parser, recovery_bytes, recovery_times,
-                                             ARRAY_LENGTH(recovery_bytes)), 1, 1, 0);
+    result = uart_feed_stream(&parser, recovery_bytes, recovery_times,
+                              ARRAY_LENGTH(recovery_bytes));
+    if (!expect_counts(result, 1, 1, 0)) {
+        passed = 0;
+    }
 
     puts("\nTest 3 -- Two valid frames back-to-back");
     parser = uart_parser_init(DEMO_TIMEOUT_MS);
-    passed &= expect_counts(uart_feed_stream(&parser, consecutive_bytes, consecutive_times,
-                                             ARRAY_LENGTH(consecutive_bytes)), 2, 0, 0);
+    result = uart_feed_stream(&parser, consecutive_bytes, consecutive_times,
+                              ARRAY_LENGTH(consecutive_bytes));
+    if (!expect_counts(result, 2, 0, 0)) {
+        passed = 0;
+    }
 
     puts("\nTest 4 -- Timeout disabled");
     puts("The gap is ignored. The partial frame continues to its checksum.");
     parser = uart_parser_init(0u);
-    passed &= expect_counts(uart_feed_stream(&parser, recovery_bytes, recovery_times,
-                                             ARRAY_LENGTH(recovery_bytes)), 0, 0, 1);
+    result = uart_feed_stream(&parser, recovery_bytes, recovery_times,
+                              ARRAY_LENGTH(recovery_bytes));
+    if (!expect_counts(result, 0, 0, 1)) {
+        passed = 0;
+    }
 
     return passed ? EXIT_SUCCESS : EXIT_FAILURE;
 }
