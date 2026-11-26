@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #define UART_SOF 0xAAu
 #define UART_MAX_PAYLOAD 16u
@@ -23,23 +24,23 @@ typedef enum {
 } FeedResult;
 
 typedef struct {
-    uint8_t command;
-    uint8_t length;
-    uint8_t payload[UART_MAX_PAYLOAD];
-} UartFrame;
-
-typedef struct {
     ParserState state;
     uint32_t timeout_ms;
     uint32_t last_byte_ms;
     uint8_t payload_index;
     uint8_t checksum;
-    UartFrame frame;
+    uint8_t command;
+    uint8_t length;
+    uint8_t payload[UART_MAX_PAYLOAD];
 } UartParser;
 
 static UartParser uart_parser_init(uint32_t timeout_ms)
 {
-    UartParser parser = {.state = WAIT_SOF, .timeout_ms = timeout_ms};
+    UartParser parser;
+
+    memset(&parser, 0, sizeof(parser));
+    parser.state = WAIT_SOF;
+    parser.timeout_ms = timeout_ms;
     return parser;
 }
 
@@ -60,7 +61,7 @@ static FeedResult uart_parser_feed(UartParser *parser, uint8_t byte,
         parser->state = READ_CMD;
         break;
     case READ_CMD:
-        parser->frame.command = byte;
+        parser->command = byte;
         parser->checksum = byte;
         parser->state = READ_LEN;
         break;
@@ -69,16 +70,16 @@ static FeedResult uart_parser_feed(UartParser *parser, uint8_t byte,
             parser->state = WAIT_SOF;
             return UART_IN_PROGRESS;
         }
-        parser->frame.length = byte;
+        parser->length = byte;
         parser->payload_index = 0u;
         parser->checksum ^= byte;
         parser->state = byte == 0u ? READ_CHECKSUM : READ_PAYLOAD;
         break;
     case READ_PAYLOAD:
-        parser->frame.payload[parser->payload_index] = byte;
+        parser->payload[parser->payload_index] = byte;
         ++parser->payload_index;
         parser->checksum ^= byte;
-        if (parser->payload_index == parser->frame.length) {
+        if (parser->payload_index == parser->length) {
             parser->state = READ_CHECKSUM;
         }
         break;
@@ -104,7 +105,7 @@ typedef struct {
 static StreamResult uart_feed_stream(UartParser *parser, const uint8_t *bytes,
                                      const uint32_t *arrival_times, size_t count)
 {
-    StreamResult summary = {0};
+    StreamResult summary = {0, 0, 0};
 
     for (size_t i = 0; i < count; ++i) {
         const uint8_t byte = bytes[i];
@@ -125,13 +126,12 @@ static StreamResult uart_feed_stream(UartParser *parser, const uint8_t *bytes,
         printf("t=%3lums  byte=0x%02X  -> ", (unsigned long)arrival_ms,
                (unsigned int)byte);
         if (result == UART_FRAME_OK) {
-            const UartFrame *frame = &parser->frame;
             ++summary.frames;
             printf("FRAME OK  CMD=0x%02X LEN=%u PAYLOAD=[",
-                   (unsigned int)frame->command, (unsigned int)frame->length);
-            for (uint8_t j = 0; j < frame->length; ++j) {
+                   (unsigned int)parser->command, (unsigned int)parser->length);
+            for (uint8_t j = 0; j < parser->length; ++j) {
                 printf("%s%02X", j == 0u ? "" : " ",
-                       (unsigned int)frame->payload[j]);
+                       (unsigned int)parser->payload[j]);
             }
             puts("]");
         } else if (result == UART_BAD_CHECKSUM) {
